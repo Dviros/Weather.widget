@@ -1,11 +1,57 @@
-const lat = 0; // lattitude
-const lon = 0; // longitude
+// Initialize with default values
+let lat = 0;
+let lon = 0;
+
+// Function to get current position
+const getLocation = () => {
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        lat = position.coords.latitude;
+        lon = position.coords.longitude;
+        // Trigger an update when location is obtained
+        window.uebersicht.run(command);
+      },
+      (error) => {
+        console.error("Error getting location:", error.message);
+      }
+    );
+  } else {
+    console.error("Geolocation is not supported by this browser.");
+  }
+};
+
+// Get location when the widget loads
+getLocation();
 
 export const command = `
   curl -s "https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=355227495210c83dcc4f7cb00e980869"
 `;
 
 export const refreshFrequency = 60 * 1000;
+
+// Track drag state
+let isDragging = false;
+let initialX, initialY;
+let offsetX = 0, offsetY = 0;
+let isDragMode = false;
+let dragModeTimer = null;
+
+// Initial position - these can be stored in localStorage to remember position
+let positionX = 255;
+let positionY = 829;
+
+// Try to load saved position if available
+try {
+  const savedX = localStorage.getItem('weatherWidgetX');
+  const savedY = localStorage.getItem('weatherWidgetY');
+  if (savedX !== null && savedY !== null) {
+    positionX = parseInt(savedX);
+    positionY = parseInt(savedY);
+  }
+} catch (e) {
+  console.error("Could not load saved position:", e);
+}
 
 export const render = ({ output }) => {
   let temp = "0"; // Default temperature
@@ -93,12 +139,120 @@ export const render = ({ output }) => {
     weatherDescription
   );
 
+  // Toggle drag mode on double click
+  const toggleDragMode = () => {
+    isDragMode = !isDragMode;
+    
+    const widget = document.getElementById('weatherContainer');
+    if (widget) {
+      if (isDragMode) {
+        // Visual indication that widget is in drag mode
+        widget.style.boxShadow = '0 0 10px 2px rgba(255, 255, 255, 0.7)';
+        widget.style.cursor = 'move';
+        
+        // Set timer to exit drag mode after 5 seconds of inactivity
+        resetDragModeTimer();
+      } else {
+        // Remove visual indication
+        widget.style.boxShadow = 'none';
+        widget.style.cursor = 'default';
+        
+        // Clear timer if exists
+        if (dragModeTimer) {
+          clearTimeout(dragModeTimer);
+          dragModeTimer = null;
+        }
+      }
+    }
+  };
+  
+  // Reset the timer for drag mode
+  const resetDragModeTimer = () => {
+    if (dragModeTimer) {
+      clearTimeout(dragModeTimer);
+    }
+    
+    dragModeTimer = setTimeout(() => {
+      if (isDragMode) {
+        toggleDragMode();
+      }
+    }, 5000); // 5 seconds
+  };
+  
+  // Event handlers for dragging
+  const handleMouseDown = (e) => {
+    if (!isDragMode) return;
+    
+    isDragging = true;
+    initialX = e.clientX;
+    initialY = e.clientY;
+    
+    // Prevent text selection during drag
+    document.body.style.userSelect = 'none';
+    
+    // Add event listeners for drag and drop
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    
+    // Reset timer when starting to drag
+    resetDragModeTimer();
+  };
+  
+  const handleMouseMove = (e) => {
+    if (!isDragging) return;
+    
+    // Calculate new position
+    const dx = e.clientX - initialX;
+    const dy = e.clientY - initialY;
+    
+    positionX += dx;
+    positionY += dy;
+    
+    // Update widget position
+    const widget = document.getElementById('weatherContainer');
+    if (widget) {
+      widget.style.left = `${positionX}px`;
+      widget.style.top = `${positionY}px`;
+    }
+    
+    // Reset initial position for next movement
+    initialX = e.clientX;
+    initialY = e.clientY;
+    
+    // Reset timer when dragging
+    resetDragModeTimer();
+  };
+  
+  const handleMouseUp = () => {
+    if (!isDragging) return;
+    
+    isDragging = false;
+    
+    // Remove event listeners
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    
+    // Reset user-select
+    document.body.style.userSelect = '';
+    
+    // Save position to localStorage
+    try {
+      localStorage.setItem('weatherWidgetX', positionX.toString());
+      localStorage.setItem('weatherWidgetY', positionY.toString());
+    } catch (e) {
+      console.error("Could not save position:", e);
+    }
+    
+    // Reset timer when done dragging
+    resetDragModeTimer();
+  };
+
   return (
     <div
       style={{
         position: "absolute",
-        top: "829px",
-        left: "255px",
+        top: `${positionY}px`,
+        left: `${positionX}px`,
         background: background,
         WebkitBackdropFilter: "blur(15px)",
         borderRadius: "20px",
@@ -108,8 +262,11 @@ export const render = ({ output }) => {
         fontFamily: "'Arial', sans-serif",
         textAlign: "center",
         display: "flex",
+        cursor: "move", // Change cursor to indicate draggable
       }}
       id="weatherContainer"
+      onMouseDown={handleMouseDown}
+      onDoubleClick={toggleDragMode}
     >
       <div
         style={{
